@@ -1,0 +1,1026 @@
+library(tidyverse)
+library(readxl)
+library(dlookr)
+library(summarytools)
+library(caret)
+library(catboost)
+library(xgboost)
+library(gbm)
+library(lightgbm)
+library(mlbench)
+library(reshape2)
+library(scales)
+
+House_data <-read_excel("C:/Users/DELL/Desktop/2024_Projects/Project work from Deji/Residential Property Types Using Machine Learning dataset/cracked.xlsx")
+
+
+month_names <- c("Jan 2017", "Feb 2017", "Mar 2017", "Apr 2017", "May 2017", "Jun 2017", 
+                 "Jul 2017", "Aug 2017", "Sep 2017", "Oct 2017", "Nov 2017", "Dec 2017",
+                 "Jan 2018", "Feb 2018", "Mar 2018", "Apr 2018", "May 2018", "Jun 2018", 
+                 "Jul 2018", "Aug 2018", "Sep 2018", "Oct 2018", "Nov 2018", "Dec 2018",
+                 "Jan 2019", "Feb 2019", "Mar 2019", "Apr 2019", "May 2019", "Jun 2019", 
+                 "Jul 2019", "Aug 2019", "Sep 2019", "Oct 2019", "Nov 2019", "Dec 2019",
+                 "Jan 2020", "Feb 2020", "Mar 2020", "Apr 2020", "May 2020", "Jun 2020", 
+                 "Jul 2020", "Aug 2020", "Sep 2020", "Oct 2020", "Nov 2020", "Dec 2020",
+                 "Jan 2021", "Feb 2021", "Mar 2021", "Apr 2021", "May 2021", "Jun 2021", 
+                 "Jul 2021", "Aug 2021", "Sep 2021", "Oct 2021", "Nov 2021", "Dec 2021",
+                 "Jan 2022", "Feb 2022", "Mar 2022", "Apr 2022", "May 2022", "Jun 2022", 
+                 "Jul 2022", "Aug 2022", "Sep 2022", "Oct 2022", "Nov 2022", "Dec 2022",
+                 "Jan 2023", "Feb 2023", "Mar 2023", "Apr 2023", "May 2023", "Jun 2023", 
+                 "Jul 2023", "Aug 2023", "Sep 2023", "Oct 2023")
+
+
+House_data_T <- House_data%>%mutate(
+    type_label = case_when(
+      type == 1 ~ "Empty plot of land",
+      type == 2 ~ "Flat",
+      type == 3 ~ "Bungalow",
+      type == 4 ~ "Chalet",
+      type == 5 ~ "Terraced house",
+      type == 6 ~ "End-terraced house",
+      type == 7 ~ "Semi-detached house",
+      type == 8 ~ "Detached house",
+      TRUE ~ "Unknown"
+    ),
+    pcode_label = case_when(
+      pcode == 1 ~ "South and East Central Norwich",
+      pcode == 2 ~ "West Central Norwich",
+      pcode == 3 ~ "North Central Norwich",
+      pcode == 4 ~ "South-West Norwich",
+      pcode == 5 ~ "West Norwich",
+      pcode == 6 ~ "North Norwich",
+      pcode == 7 ~ "East Norwich",
+      pcode == 8 ~ "North-West Norwich",
+      TRUE ~ "Unknown"
+    ),
+    month_label = case_when(
+      month >= 1 & month <= 82 ~ month_names[month],
+      TRUE ~ "Unknown"
+    ),
+  dg_label= ifelse(dg==1, "double glazing", "not double glazing"),
+  solar_label= ifelse(solar==1, " solar panels", "no solar panels"),
+  loft_label= ifelse(loft==1, "loft insulation", "no loft insulation")
+  )
+
+split_month_year <- strsplit(House_data_T$month_label, " ")
+House_data_T <- House_data_T%>%mutate(
+  Months_L = sapply(split_month_year, function(x) x[1])%>%as.data.frame(),
+  Years_L = sapply(split_month_year, function(x) x[2])%>%as.data.frame()
+)
+
+House_data <- House_data%>%select(-house)
+
+# Data integrity analysis
+dlookr::diagnose_outlier(House_data)
+dlookr::diagnose(House_data)
+dlookr::plot_normality(House_data)
+
+
+# Exploratory Analysis
+
+House_type_price<-House_data_T%>%group_by(type_label)%>%summarize(MAX= max(price) ,MIN=min(price), 
+              med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+              cv=(sd(price)/mean(price))*100)
+House_type_price
+ggplot2::ggplot(House_data_T, aes(x = type_label, y = price)) +
+  geom_violin(trim = FALSE, aes(fill = type_label), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of House Types",
+       x = "House Type",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 45, face = "bold",colour = "black",hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank())  # Add y-axis grid lines
+
+
+
+pcode_type_price<-House_data_T%>%group_by(pcode_label)%>%summarize(MAX= max(price) ,MIN=min(price), 
+                      med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+                      cv=(sd(price)/mean(price))*100)
+pcode_type_price  
+ggplot2::ggplot(House_data_T, aes(x = pcode_label , y = price)) +
+  geom_violin(trim = FALSE, aes(fill = pcode_label ), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of Pcode Types",
+       x = "Pcode Type",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 60, face = "bold",colour = "black",hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank()) 
+
+month_type_price<-House_data_T%>%group_by( Months_L$.)%>%summarize(MAX= max(price) ,MIN=min(price), 
+                                                                   med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+                                                                   cv=(sd(price)/mean(price))*100)
+
+month_type_price
+House_data_T$Months_L$. <- factor(House_data_T$Months_L$.,
+                                  levels = month.abb, ordered = TRUE)
+
+# Create the plot
+ggplot(House_data_T, aes(x = Months_L$., y = price)) +
+  geom_violin(trim = FALSE, aes(fill = Months_L$.), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of House Types by Month",
+       x = "Month",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 45, face = "bold", colour = "black", hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank())
+
+year_type_price<-House_data_T%>%group_by(Years_L$.)%>%summarize(MAX= max(price) ,MIN=min(price), 
+                                                               med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+                                                               cv=(sd(price)/mean(price))*100)
+
+year_type_price
+ggplot2::ggplot(House_data_T, aes(x = Years_L$., y = price)) +
+  geom_violin(trim = FALSE, aes(fill =  Years_L$.), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of House Types",
+       x = "House Type",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 45, face = "bold",colour = "black",hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank()) 
+
+dg_type_price<-House_data_T%>%group_by(dg_label)%>%summarize(MAX= max(price) ,MIN=min(price), 
+                                                                   med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+                                                                   cv=(sd(price)/mean(price))*100)
+dg_type_price
+ggplot2::ggplot(House_data_T, aes(x = dg_label, y = price)) +
+  geom_violin(trim = FALSE, aes(fill = dg_label), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of House Types",
+       x = "House Type",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 45, face = "bold",colour = "black",hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank()) 
+# Add y-axis grid lines
+solar_type_price<-House_data_T%>%group_by(solar_label)%>%summarize(MAX= max(price) ,MIN=min(price), 
+                                                             med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+                                                             cv=(sd(price)/mean(price))*100)
+
+solar_type_price
+ggplot2::ggplot(House_data_T, aes(x = solar_label, y = price)) +
+  geom_violin(trim = FALSE, aes(fill = solar_label), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of House Types",
+       x = "House Type",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 45, face = "bold",colour = "black",hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank()) 
+# Add y-axis grid lines
+soft_type_price<-House_data_T%>%group_by(loft_label)%>%summarize(MAX= max(price) ,MIN=min(price), 
+                                                             med=median(price), mean=mean(price), sd=sd(price), IQR=IQR(price),
+                                                             cv=(sd(price)/mean(price))*100)
+
+soft_type_price
+ggplot2::ggplot(House_data_T, aes(x = loft_label, y = price)) +
+  geom_violin(trim = FALSE, aes(fill = loft_label), show.legend = FALSE, color = "black") +   # Custom color for each violin
+  stat_summary(fun = median, geom = "point", shape = 23, size = 3, fill = "red", color = "black") +  # Enhanced median point
+  geom_jitter(width = 0.2, size = 1, alpha = 0.5, color = "darkblue") +  # Adding individual data points
+  labs(title = "Price Distribution of House Types",
+       x = "House Type",
+       y = "Price (in thousands)") +  # Clarified axis label
+  theme_classic() +  # Theme for a cleaner look
+  theme(plot.title = element_blank(), 
+        axis.text.x = element_text(angle = 45, face = "bold",colour = "black",hjust = 1, size = 15),  # Rotate x-axis labels
+        axis.text.y = element_blank(),
+        axis.title = element_blank(),
+        panel.grid.major.y = element_blank()) 
+
+summarytools::dfSummary(House_data_T%>%select(where("is.numeric"))%>%select(c(price,
+              beds,baths,recs,garages,sqm,gsize,poll,noise,age)))
+
+
+
+
+#FEARURE ENGINEERING
+dfk <-House_data_T%>%select(where("is.numeric"))%>%select(c(price,
+                beds,baths,recs,garages,sqm,gsize,poll,noise,age))
+
+
+
+#Normality test
+shapiro.test(House_data$price)
+shapiro.test(House_data$beds)
+shapiro.test(House_data$baths)
+shapiro.test(House_data$recs)
+shapiro.test(House_data$garages)
+shapiro.test(House_data$sqm)
+shapiro.test(House_data$gsize)
+shapiro.test(House_data$poll)
+shapiro.test(House_data$noise)
+shapiro.test(House_data$age)
+
+#1.Relationship between the denpendent variable(price) and all the independent variables
+
+cor.test(dfk$price, dfk$beds)
+cor.test(dfk$price, dfk$baths)
+cor.test(dfk$price, dfk$recs)
+cor.test(dfk$price, dfk$garages)
+cor.test(dfk$price, dfk$sqm)
+cor.test(dfk$price, dfk$gsize)
+cor.test(dfk$price, dfk$poll)
+cor.test(dfk$price, dfk$noise)
+cor.test(dfk$price, dfk$age)
+
+#2. Interaction between the independents variables
+
+correlation_data <- dfk %>% 
+  select(-price) %>% 
+  dlookr::correlate() %>% 
+  as.data.frame() %>%
+  pivot_wider(names_from = var2, values_from = coef_corr)  
+
+correlation_data
+
+
+library(caTools)
+samp <- sample.split(House_data$price, SplitRatio = 0.8)
+Train <-subset(House_data, samp==T)
+Test <- subset(House_data, samp==F)
+
+#MODELING
+1. GRADIENT BOOSTING
+TT <- trainControl(method ="cv", number = 5)
+metric="RSME"
+model_gbm <- train(price~., data = Train, method="gbm", trControl=TT, metric=metric)
+summary(model_gbm)
+plot(model_gbm)
+
+# Make predictions on the test set
+#length(Train$house)
+#length(Test$house)
+#length(House_data$house)
+
+
+
+#model_gbm <- gbm(price ~ ., 
+                 #data = House_data, 
+                 #distribution = "gaussian", 
+                 #n.trees = 100, 
+                 #interaction.depth = 3, 
+                 #shrinkage = 0.01, 
+                 #cv.folds = 5)
+
+2. # XGBoost
+set.seed(123)
+model_xgb <- train(price ~ ., data = Train, 
+                   method = "xgbTree", 
+                   trControl = TT, 
+                   metric = metric)
+summary(model_xgb)
+plot(model_xgb)
+
+
+
+3. LightGBM (with LightGBM package)
+set.seed(123)
+# Load lightgbm library
+library(lightgbm)
+
+# Prepare data
+X <- as.matrix(House_data[, -which(names(House_data) == "price")])  # Exclude 'price' column
+y <- House_data$price
+
+# Split data into training and testing sets
+set.seed(123)
+#train_index <- createDataPartition(y, p = 0.8, list = FALSE)
+train_data <- X[samp, ]
+test_data <- X[-samp, ]
+train_label <- y[samp]
+test_label <- y[-samp]
+
+
+#length(Train$house)
+#length(train_data$house)
+#length(Test$house)
+#length(House_data$house)
+
+# Create LightGBM dataset
+train_matrix <- lgb.Dataset(data = train_data, label = train_label)
+test_matrix <- lgb.Dataset(data = test_data, label = test_label)
+
+# Set LightGBM parameters
+params <- list(
+  objective = "regression",  # For regression task
+  metric = "rmse",           # Evaluation metric
+  learning_rate = 0.1,
+  num_leaves = 31,           # Controls complexity (try adjusting for optimization)
+  feature_fraction = 0.9,    # Proportion of features to randomly select at each iteration
+  bagging_fraction = 0.8,    # Subsampling of data (to prevent overfitting)
+  bagging_freq = 5           # Frequency for bagging
+)
+
+# Train the LightGBM model
+model_lgb <- lgb.train(
+  params = params,
+  data = train_matrix,
+  nrounds = 1000,                # Number of boosting rounds
+  valids = list(test = test_matrix),
+  early_stopping_rounds = 10,   # Stop early if no improvement in 10 rounds
+  verbose = 1
+)
+
+4. CATBOOST
+# CATBOOST
+# Prepare data for CatBoost
+test_pool <- catboost::catboost.load_pool(data = Test[, -which(names(House_data) == "price")], 
+                                           label = Test$price)
+train_pool <- catboost::catboost.load_pool(data = Train[, -which(names(House_data) == "price")], 
+                                           label = Train$price)
+All_pool <- catboost::catboost.load_pool(data = House_data[, -which(names(House_data) == "price")], 
+                                           label = House_data$price)
+# Train CatBoost model
+model_catboost <- catboost.train(
+  train_pool,
+  params = list(
+    loss_function = "RMSE",
+    iterations = 1000,
+    depth = 10,
+    learning_rate = 0.1,
+    eval_metric = "RMSE"
+  )
+)
+
+
+par(mfrow = c(1, 3))  # Set up plot layout for 3 plots side by side
+plot(varImp_gbm, main = "GBM - Variable Importance")
+plot(varImp_xgb, main = "XGBoost - Variable Importance")
+plot(varImp_lgb, main = "LightGBM - Variable Importance")
+
+#######################################################
+Model Evaluation on TEST data
+#######################################################
+
+RMSE
+
+#Catboost
+pred_catboost_test<- catboost.predict(model_catboost, test_pool)
+
+rmse_catboost_test <- sqrt(mean((pred_catboost_test - Test$price)^2))
+
+rsquared_catboost_test <- cor(as.matrix(pred_catboost_test, Test$price))^2
+mae_catboost_test <- mean(abs(pred_catboost_test - Test$price))
+mape_catboost_test <- mean(abs((pred_catboost_test - Test$price) / Test$price)) * 100
+
+#Lightboost
+pred_lgb_test<- predict(model_lgb, test_data)
+rmse_lgb_test <- sqrt(mean((pred_lgb_test - test_label)^2))
+rsquared_lgb_test <- cor(pred_lgb_test, test_label)^2
+mae_lgb_test <- mean(abs(pred_lgb_test - test_label))
+mape_lgb_test <- mean(abs((pred_lgb_test - test_label) / test_label)) * 100
+
+#XGB
+pre_xgb_test <- predict(model_xgb, newdata = Test)
+rmse_xgb_test <- sqrt(mean((pre_xgb_test - Test$price)^2))
+mae_xgb_test <- mean(abs(pre_xgb_test - Test$price))
+rsquared_xgb_test <- cor(pre_xgb_test, Test$price)^2
+mape_xgb_test <- mean(abs((pre_xgb_test - Test$price) / Test$price)) * 100
+
+#GBM
+pre_gbm_test <- predict(model_gbm, newdata = Test)
+rmse_gbm_test <- sqrt(mean((pre_gbm_test - Test$price)^2))
+mae_gbm_test <- mean(abs(pre_gbm_test - Test$price))
+rsquared_gbm_test <- cor(pre_gbm_test, Test$price)^2
+mape_gbm_test <- mean(abs((pre_gbm_test - Test$price) / Test$price)) * 100
+
+
+#######################################################
+Model Evaluation on TRAIN data
+#######################################################
+pre_gbm_train <- predict(model_gbm, newdata = Train)
+rmse_gbm_train <- sqrt(mean((pre_gbm_train - Train$price)^2))
+mae_gbm_train <- mean(abs(pre_gbm_train - Train$price))
+rsquared_gbm_train <- cor(pre_gbm_train, Train$price)^2
+mape_gbm_train <- mean(abs((pre_gbm_train - Train$price) / Train$price)) * 100
+
+
+pre_catboost_train <- catboost.predict(model_catboost, train_pool)
+rmse_catboost_train <- sqrt(mean((pre_catboost_train - Train$price)^2))
+mae_catboost_train <- mean(abs(pre_catboost_train - Train$price))
+rsquared_catboost_train <- cor(pre_catboost_train, Train$price)^2
+mape_catboost_train <- mean(abs((pre_catboost_train - Train$price) / Train$price)) * 100
+
+
+pre_lgb_train <- predict(model_lgb, newdata = train_data )
+rmse_lgb_train <- sqrt(mean((pre_lgb_train - train_label)^2))
+mae_lgb_train <- mean(abs(pre_lgb_train - train_label))
+rsquared_lgb_train <- cor(pre_lgb_train, train_label)^2
+mape_lgb_train <- mean(abs((pre_lgb_train - train_label) / train_label)) * 100
+
+pre_xgb_train <- predict(model_xgb, newdata = Train)
+rmse_xgb_train <- sqrt(mean((pre_xgb_train - Train$price)^2))
+mae_xgb_train <- mean(abs(pre_xgb_train - Train$price))
+rsquared_xgb_train <- cor(pre_xgb_train, Train$price)^2
+mape_xgb_train <- mean(abs((pre_xgb_train - Train$price) / Train$price)) * 100
+
+
+#######################################################
+Model Evaluation on TEST+TRAIN data
+#######################################################
+pre_catboost_all <- catboost.predict(model_catboost, All_pool)
+rmse_catboost_all <- sqrt(mean((pre_catboost_all - House_data$price)^2))
+mae_catboost_all <- mean(abs(pre_catboost_all - House_data$price))
+rsquared_catboost_all <- cor(pre_catboost_all, House_data$price)^2
+mape_catboost_all <- mean(abs((pre_catboost_all - House_data$price) / House_data$price)) * 100
+
+pre_lgb_all <- predict(model_lgb, newdata = X)
+rmse_lgb_all <- sqrt(mean((pre_lgb_all - y)^2))
+mae_lgb_all <- mean(abs(pre_lgb_all - y))
+rsquared_lgb_all <- cor(pre_lgb_all, y)^2
+mape_lgb_all <- mean(abs((pre_lgb_all - y) / y)) * 100
+
+pre_xgb_all <- predict(model_xgb, newdata = House_data)
+rmse_xgb_all <- sqrt(mean((pre_xgb_all - House_data$price)^2))
+mae_xgb_all <- mean(abs(pre_xgb_all - House_data$price))
+rsquared_xgb_all <- cor(pre_xgb_all, House_data$price)^2
+mape_xgb_all <- mean(abs((pre_xgb_all - House_data$price) / House_data$price)) * 100
+
+pre_gbm_all <- predict(model_gbm, newdata = House_data)
+rmse_gbm_all <- sqrt(mean((pre_gbm_all - House_data$price)^2))
+mae_gbm_all <- mean(abs(pre_gbm_all - House_data$price))
+rsquared_gbm_all <- cor(pre_gbm_all, House_data$price)^2
+mape_gbm_all <- mean(abs((pre_gbm_all - House_data$price) / House_data$price)) * 100
+
+
+# ALL RESULTS - RMSE
+TEST <-data.frame(Model = c("Catboost","Gradientb","Xgboost","LightBM"),RMSE = c(rmse_catboost_test,rmse_gbm_test,
+                                               rmse_xgb_test,rmse_lgb_test),
+           MAE =c(mae_catboost_test,mae_gbm_test,mae_xgb_test, mae_lgb_test),
+           Rsquared = c(rsquared_catboost_test, rsquared_gbm_test, rsquared_xgb_test,
+                        rsquared_lgb_test),
+           MAPE = c(mape_catboost_test, mape_gbm_test, mape_xgb_test ,mape_lgb_test),
+           Instances = c("Test","Test","Test","Test"))
+
+TRAIN <-data.frame(Model = c("Catboost","Gradientb","Xgboost","LightBM"),RMSE = c(rmse_catboost_train,rmse_gbm_train,
+                                                                                 rmse_xgb_train,rmse_lgb_train),
+                  MAE =c(mae_catboost_train,mae_gbm_train,mae_xgb_train, mae_lgb_train),
+                  Rsquared = c(rsquared_catboost_train, rsquared_gbm_train, rsquared_xgb_train,
+                               rsquared_lgb_train),
+                  MAPE = c(mape_catboost_train, mape_gbm_train, mape_xgb_train ,mape_lgb_train),
+                  Instances =c("Train","Train","Train","Train"))
+
+
+ALL <-data.frame(Model = c("Catboost","Gradientb","Xgboost","LightBM"),RMSE = c(rmse_catboost_all,rmse_gbm_all,
+                                                                                 rmse_xgb_all,rmse_lgb_all),
+                  MAE =c(mae_catboost_all,mae_gbm_all,mae_xgb_all, mae_lgb_all),
+                  Rsquared = c(rsquared_catboost_all, rsquared_gbm_all, rsquared_xgb_all,
+                               rsquared_lgb_all),
+                  MAPE = c(mape_catboost_all, mape_gbm_all, mape_xgb_all ,mape_lgb_all),
+                 Instances = c("All","All","All","All"))
+
+All_result <- rbind(TEST, TRAIN, ALL)
+All_result
+library(reshape2)
+All_result_melted <- melt(All_result, id.vars = c("Model", "Instances"))
+
+# Create the bar chart with enhancements
+ggplot(All_result_melted, aes(x = Model, y = value, fill = Instances)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +  # Bar chart with dodged bars
+  #geom_text(aes(label = round(value, 2)), vjust = 0.5, hjust = 0.5, size = 4.5, fontface = "bold", position = position_dodge(0.7)) +  # Add bold data labels inside bars
+  facet_wrap(~ variable, scales = "free_y") +  # Separate panels for each model, independent y-axis scaling
+  labs(title = " ") +  # Title only, no x or y labels
+  theme_minimal(base_size = 14) +  # Set base font size for readability
+  scale_fill_brewer(palette = "Set2") +  # Use a refined color palette
+  theme(
+    plot.title = element_blank(),  # Center and format title
+    strip.text = element_text(size = 12, face = "bold"),  # Format facet labels (Model names)
+    axis.text.x = element_text(angle = 45, hjust = 1,face = "bold", colour = "black"),  # Remove x-axis labels
+    axis.text.y = element_blank(),  # Remove y-axis labels
+    axis.title = element_blank(),  # Remove axis titles
+    legend.title = element_blank(),  # Remove legend title
+    legend.position = "right",
+    legend.text = element_text(size = 12,face = "bold",colour = "black"),# Position legend to the right
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank()   # Remove minor grid lines
+  ) +
+  scale_y_continuous(labels = comma)  # Format y-axis labels with commas
+
+##############################################################################
+ggplot(All_result_melted, aes(x = Model, y = value, color = Instances, group = Instances)) +
+  geom_line(size = 1.2) +  # Increase line thickness
+  geom_point(size = 4) +  # Increase point size
+  facet_wrap(~variable, scales = "free_y", nrow = 2) +  # Separate plots for each metric
+  labs(
+    title = "",
+    y = "Metric Value",
+    x = "Model",
+    color = "Data Split"  # Change legend title to be more descriptive
+  ) +
+  scale_color_brewer(palette = "Set1") +  # Use a more appealing color palette
+  theme_minimal(base_size = 14) +  # Set a base font size for better readability
+  theme(
+    plot.title = element_blank(),
+    strip.text = element_text(size = 12, face = "bold"),# Center and bold title
+    axis.title.x = element_blank(),  # Bold x-axis label
+    axis.title.y = element_blank(),  # Bold y-axis label
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12,face = "bold",colour = "black"),  # Rotate and adjust x-axis text
+    axis.text.y = element_blank(),  # Adjust y-axis text size
+    legend.position = "top",  # Position legend at the top
+    legend.title = element_text(size = 14,face = "bold",colour = "black"),
+    legend.text = element_text(size = 12,face = "bold",colour = "black"),  # Legend text size
+    panel.grid.major = element_blank(),  # Customize grid lines
+    panel.grid.minor = element_blank()  # Remove minor grid lines for a cleaner look
+  )
+
+##############################################################################
+
+REIDUAL ANALYSIS 
+1. Test Calculate residuals for each model
+Residual_gbm_TE <- Test$price - pre_gbm_test 
+Residual_xgb_TE <- Test$price - pre_xgb_test 
+Residual_lgb_TE <- test_label - pred_lgb_test
+Residual_lgb_df_TE <- as.data.frame(Residual_lgb_TE)  # Convert residuals to a data frame
+sampled_Residual_lgb_TE <- Residual_lgb_df_TE %>% sample_n(467)
+Residual_catboost_TE <- Test$price - pred_catboost_test
+
+# Combine the residuals into a data frame
+result_TEST <- data.frame(
+  Residual_gbm = Residual_gbm_TE,
+  Residual_xgb = Residual_xgb_TE,
+  Residual_lgb = sampled_Residual_lgb_TE,
+  Residual_catboost = Residual_catboost_TE
+)
+
+summary(result_TEST)
+confidence_interval <- function(x, confidence = 0.95) {
+  n <- length(x)
+  mean_x <- mean(x)
+  std_error <- sd(x) / sqrt(n)  # Standard error
+  error_margin <- qnorm((1 + confidence) / 2) * std_error  # Z-value for 95% CI
+  
+  lower <- mean_x - error_margin
+  upper <- mean_x + error_margin
+  
+  return(c(mean = mean_x, lower = lower, upper = upper))
+}
+
+# Apply the function to each residual column
+ci_gbm <- confidence_interval(result_TEST$Residual_gbm)
+ci_xgb <- confidence_interval(result_TEST$Residual_xgb)
+ci_lgb <- confidence_interval(result_TEST$Residual_lgb)
+ci_catboost <- confidence_interval(result_TEST$Residual_catboost)
+
+# Combine results into a data frame
+ci_result_TE <- data.frame(
+  Model = c("GBM", "XGBoost","Lightboost", "CatBoost"),
+  Mean = c(ci_gbm["mean"], ci_xgb["mean"], ci_lgb["mean"] , ci_catboost["mean"]),
+  Lower_CI = c(ci_gbm["lower"], ci_xgb["lower"], ci_lgb["lower"], ci_catboost["lower"]),
+  Upper_CI = c(ci_gbm["upper"], ci_xgb["upper"], ci_lgb["upper"], ci_catboost["upper"])
+)
+
+# Print the confidence interval results
+print(ci_result_TE)
+
+ggplot(ci_result_TE, aes(x = Model, y = Mean, ymin = Lower_CI, ymax = Upper_CI, color = Model)) +
+  geom_point(size = 4) +
+  geom_errorbar(width = 0.2) +  # Add error bars
+  geom_text(aes(label = round(Mean, 2)), vjust = -1, size = 4, color = "black") +  # Black data labels above the points
+  theme_minimal(base_size = 15) +  # Minimal theme for clean visuals
+  labs(title = "", y = "", x = "") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center and bold title
+    legend.position = "none",  # Remove legend
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.text.x = element_text(color = "black"),  # Make x-axis text black
+    axis.text.y = element_blank()  # Remove y-axis labels
+  )
+
+##
+shapiro.test(result_TEST$Residual_gbm)
+shapiro.test(result_TEST$Residual_xgb)
+shapiro.test(result_TEST$Residual_lgb)
+shapiro.test(result_TEST$Residual_catboost)
+#
+2. Train Calculate residuals for each model
+
+
+Residual_gbm_TR <- Train$price - pre_gbm_train 
+Residual_xgb_TR <- Train$price - pre_xgb_train 
+Residual_lgb_TR <- train_label - pre_lgb_train 
+Residual_lgb_df_TR <- as.data.frame(Residual_lgb_TR)  # Convert residuals to a data frame
+sampled_Residual_lgb_TR <- Residual_lgb_df_TR %>% sample_n(467)
+Residual_catboost_TR <- Train$price - pre_catboost_train
+
+# Combine the residuals into a data frame
+result_TRAIN <- data.frame(
+  Residual_gbm = Residual_gbm_TR,
+  Residual_xgb = Residual_xgb_TR,
+  Residual_lgb = sampled_Residual_lgb_TR,
+  Residual_catboost = Residual_catboost_TR
+)
+
+summary(result_TRAIN)
+confidence_interval <- function(x, confidence = 0.95) {
+  n <- length(x)
+  mean_x <- mean(x)
+  std_error <- sd(x) / sqrt(n)  # Standard error
+  error_margin <- qnorm((1 + confidence) / 2) * std_error  # Z-value for 95% CI
+  
+  lower <- mean_x - error_margin
+  upper <- mean_x + error_margin
+  
+  return(c(mean = mean_x, lower = lower, upper = upper))
+}
+
+# Apply the function to each residual column
+ci_gbm_TRAIN <- confidence_interval(result_TRAIN$Residual_gbm)
+ci_xgb_TRAIN <- confidence_interval(result_TRAIN$Residual_xgb)
+ci_lgb_TRAIN <- confidence_interval(result_TRAIN$Residual_lgb)
+ci_catboost_TRAIN <- confidence_interval(result_TRAIN$Residual_catboost)
+
+# Combine results into a data frame
+ci_result_TRAIN <- data.frame(
+  Model = c("GBM", "XGBoost","Lightboost", "CatBoost"),
+  Mean = c(ci_gbm_TRAIN["mean"], ci_xgb_TRAIN["mean"], ci_lgb_TRAIN["mean"] , ci_catboost_TRAIN["mean"]),
+  Lower_CI = c(ci_gbm_TRAIN["lower"], ci_xgb_TRAIN["lower"], ci_lgb_TRAIN["lower"], ci_catboost_TRAIN["lower"]),
+  Upper_CI = c(ci_gbm_TRAIN["upper"], ci_xgb_TRAIN["upper"], ci_lgb_TRAIN["upper"], ci_catboost_TRAIN["upper"])
+)
+
+# Print the confidence interval results
+print(ci_result_TRAIN)
+
+ggplot(ci_result_TRAIN, aes(x = Model, y = Mean, ymin = Lower_CI, ymax = Upper_CI, color = Model)) +
+  geom_point(size = 4) +
+  geom_errorbar(width = 0.2) +  # Add error bars
+  geom_text(aes(label = round(Mean, 2)), vjust = -1, size = 4, color = "black") +  # Black data labels above the points
+  theme_minimal(base_size = 15) +  # Minimal theme for clean visuals
+  labs(title = "", y = "", x = "") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center and bold title
+    legend.position = "none",  # Remove legend
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.text.x = element_text(color = "black"),  # Make x-axis text black
+    axis.text.y = element_blank()  # Remove y-axis labels
+  )
+
+##
+shapiro.test(result_TRAIN$Residual_gbm)
+shapiro.test(result_TRAIN$Residual_xgb)
+shapiro.test(result_TRAIN$Residual_lgb)
+shapiro.test(result_TRAIN$Residual_catboost)
+
+3. ALL
+1. Test Calculate residuals for each model
+Residual_gbm_All <- House_data$price - pre_gbm_all 
+Residual_xgb_All <- House_data$price - pre_xgb_all 
+Residual_lgb_All <- y - pre_lgb_all
+Residual_lgb_df_All <- as.data.frame(Residual_lgb_All)  # Convert residuals to a data frame
+sampled_Residual_lgb_All <- Residual_lgb_df_All %>% sample_n(467)
+Residual_catboost_All <- House_data$price - pre_catboost_all
+
+# Combine the residuals into a data frame
+result_ALL <- data.frame(
+  Residual_gbm = Residual_gbm_All,
+  Residual_xgb = Residual_xgb_All,
+  Residual_lgb = sampled_Residual_lgb_All,
+  Residual_catboost = Residual_catboost_All
+)
+
+summary(result_ALL)
+confidence_interval <- function(x, confidence = 0.95) {
+  n <- length(x)
+  mean_x <- mean(x)
+  std_error <- sd(x) / sqrt(n)  # Standard error
+  error_margin <- qnorm((1 + confidence) / 2) * std_error  # Z-value for 95% CI
+  
+  lower <- mean_x - error_margin
+  upper <- mean_x + error_margin
+  
+  return(c(mean = mean_x, lower = lower, upper = upper))
+}
+
+# Apply the function to each residual column
+ci_gbm_All <- confidence_interval(result_ALL$Residual_gbm)
+ci_xgb_All <- confidence_interval(result_ALL$Residual_xgb)
+ci_lgb_All <- confidence_interval(result_ALL$Residual_lgb)
+ci_catboost_All <- confidence_interval(result_ALL$Residual_catboost)
+
+# Combine results into a data frame
+ci_result_All <- data.frame(
+  Model = c("GBM", "XGBoost","Lightboost", "CatBoost"),
+  Mean = c(ci_gbm["mean"], ci_xgb["mean"], ci_lgb["mean"] , ci_catboost["mean"]),
+  Lower_CI = c(ci_gbm["lower"], ci_xgb["lower"], ci_lgb["lower"], ci_catboost["lower"]),
+  Upper_CI = c(ci_gbm["upper"], ci_xgb["upper"], ci_lgb["upper"], ci_catboost["upper"])
+)
+
+# Print the confidence interval results
+print(ci_result_All)
+
+ggplot(ci_result_All, aes(x = Model, y = Mean, ymin = Lower_CI, ymax = Upper_CI, color = Model)) +
+  geom_point(size = 4) +
+  geom_errorbar(width = 0.2) +  # Add error bars
+  geom_text(aes(label = round(Mean, 2)), vjust = -1, size = 4, color = "black") +  # Black data labels above the points
+  theme_minimal(base_size = 15) +  # Minimal theme for clean visuals
+  labs(title = "", y = "", x = "") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),  # Center and bold title
+    legend.position = "none",  # Remove legend
+    panel.grid = element_blank(),  # Remove grid lines
+    axis.title.y = element_blank(),  # Remove y-axis title
+    axis.text.x = element_text(color = "black"),  # Make x-axis text black
+    axis.text.y = element_blank()  # Remove y-axis labels
+  )
+
+##
+shapiro.test(result_ALL$Residual_gbm)
+shapiro.test(result_ALL$Residual_xgb)
+shapiro.test(result_ALL$Residual_lgb)
+shapiro.test(result_ALL$Residual_catboost)
+#
+
+##############################################################################
+RESIDUAL RELATIONSHIPS
+
+Hmisc::rcorr(as.matrix(result_ALL))
+Hmisc::rcorr(as.matrix(result_TEST))
+Hmisc::rcorr(as.matrix(result_TRAIN))
+
+corrplot::corrplot(cor(result_ALL))
+corrplot::corrplot(cor(result_TEST))
+corrplot::corrplot(cor(result_TRAIN))
+
+
+
+result_ALL_p<-result_ALL%>%rename(Re_gb_Al=Residual_gbm,Re_xgb_Al= Residual_xgb, 
+                                Re_lgb_Al= Residual_lgb_All,
+                                Re_ctb_Al=Residual_catboost)
+result_TRAIN_p<-result_TRAIN%>%rename(Re_gb_Tr=Residual_gbm,Re_xgb_Tr= Residual_xgb, 
+                                  Re_lgb_Tr= Residual_lgb_TR,
+                                  Re_ctb_Tr=Residual_catboost)
+result_TEST_p<-result_TEST%>%rename(Re_gb_Te=Residual_gbm,Re_xgb_Te= Residual_xgb, 
+                                  Re_lgb_Te= Residual_lgb_TE,
+                                  Re_ctb_Te=Residual_catboost)
+combined_T <-cbind(result_ALL_p%>%sample_n(nrow(result_TEST_p)), 
+                   result_TRAIN_p%>%sample_n(nrow(result_TEST_p)), result_TEST_p)
+
+Hmisc::rcorr(as.matrix(combined_T))
+
+corrplot::corrplot(cor(combined_T))
+corrplot::corrplot(
+  cor(combined_T),          
+  method = "color",         
+  type = "upper",            
+  order = "hclust",         
+  addCoef.col = "black",     
+  tl.col = "black",          
+  tl.srt = 45,              
+  col = colorRampPalette(c("red", "white", "blue"))(200), 
+  title = NULL,  
+  mar = c(0, 0, 2, 0),       
+  cl.lim = c(-1, 1),        
+  number.cex = 0.7           
+)
+
+################################################################################
+
+result_ALL <- result_ALL%>%mutate(instances=rep("All", nrow(result_ALL)))
+result_TRAIN <- result_TRAIN%>%mutate(instances=rep("Train", nrow(result_TRAIN)))
+result_TEST <- result_TEST%>%mutate(instances=rep("Test", nrow(result_TEST)))
+combined <-cbind(result_ALL%>%sample_n(nrow(result_TEST)), 
+                 result_TRAIN%>%sample_n(nrow(result_TEST)), result_TEST)
+
+colnames(result_ALL)
+colnames(result_TEST)
+colnames(result_TRAIN)
+result_ALL <- result_ALL%>%rename(Residual_lgb=Residual_lgb_All)
+result_TEST <- result_TEST%>%rename(Residual_lgb=Residual_lgb_TE)
+result_TRAIN <- result_TRAIN%>%rename(Residual_lgb=Residual_lgb_TR)
+combined <-rbind(result_ALL, 
+                 result_TRAIN, result_TEST)
+ 
+
+############################################################################
+
+library("factoextra")
+library("patchwork")
+
+pca_result <- prcomp(combined[ , -5], 
+                     scale = TRUE)
+summary(pca_result)
+bipl1 <-fviz_pca_biplot(pca_result,
+                axes = c(1, 2),           
+                label = "var",             
+                col.var = "black",        
+                habillage = combined$instances, 
+                repel = TRUE,
+                legend.title = NULL,  
+                show.legend = FALSE 
+) +
+  theme_minimal() +                        
+  theme(
+    axis.title = element_text(face = "bold", size = 14),               
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "none",                             
+    panel.grid.major = element_blank(),                                
+    panel.grid.minor = element_blank(),
+    plot.title = element_blank()
+  ) +
+  labs(
+    x = "PC1", y = "PC2"                                              
+  )
+
+bipl1
+bipl2 <- fviz_pca_biplot(pca_result,
+                axes = c(1, 3),           
+                label = "var",             
+                col.var = "black",        
+                habillage = combined$instances, 
+                repel = TRUE,
+                legend.title = NULL,  
+                show.legend = FALSE 
+) +
+  theme_minimal() +                        
+  theme(
+    axis.title = element_text(face = "bold", size = 14),               
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "none",                            
+    panel.grid.major = element_blank(),                                
+    panel.grid.minor = element_blank(),
+    plot.title = element_blank()
+  ) +
+  labs(
+    x = "PC1", y = "PC2"                                              
+  )
+
+bipl3 <-fviz_pca_biplot(pca_result,
+                axes = c(2, 3),           
+                label = "var",             
+                col.var = "black",        
+                habillage = combined$instances, 
+                repel = TRUE               
+) +
+  theme_minimal() +                        
+  theme(
+    axis.title = element_text(face = "bold", size = 14),               
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.title = element_text(size = 15, face = "bold"),             
+    legend.text = element_text(size = 15, face = "bold"),
+    legend.position = "bottom",
+    panel.grid.major = element_blank(),                                
+    panel.grid.minor = element_blank(),
+    plot.title = element_blank()
+  ) +
+  labs(
+    x = "PC1", y = "PC2"                                              
+  )
+
+bipl1 / bipl2 / bipl3
+
+
+
+#Reshape to long format
+df_long <- combined%>%rename(Gb=Residual_gbm,Xgb=Residual_xgb,
+                             Lgb=Residual_lgb, Catb=Residual_catboost) %>%pivot_longer(
+    cols = ends_with("b"),
+    names_to = "model",
+    values_to = "residual"
+  )
+
+# Reshape to wide format without calculating mean
+df_wide <- df_long %>%
+  group_by(model, instances) %>%
+  mutate(row = row_number()) %>%  # Create a row identifier
+  pivot_wider(
+    names_from = instances,
+    values_from = residual,
+    values_fill = list(residual = NA)  # Fill missing values with NA
+  ) %>%
+  ungroup() %>%
+  select(-row)  # Drop the row identifier
+
+unique(is.na(df_wide))
+df_wide <-drop_na(df_wide)
+pca_result_w <- prcomp(df_wide[ , -1], 
+                     scale = TRUE)
+summary(pca_result_w)
+bipl1_w <-fviz_pca_biplot(pca_result_w,
+                        axes = c(1, 2),           
+                        label = "var",             
+                        col.var = "black",        
+                        habillage = df_wide$model, 
+                        repel = TRUE,
+                        legend.title = NULL,  
+                        show.legend = FALSE 
+) +
+  theme_minimal() +                        
+  theme(
+    axis.title = element_text(face = "bold", size = 14),               
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "none",                             
+    panel.grid.major = element_blank(),                                
+    panel.grid.minor = element_blank(),
+    plot.title = element_blank()
+  ) +
+  labs(
+    x = "PC1", y = "PC2"                                              
+  )
+
+
+bipl2_w <- fviz_pca_biplot(pca_result_w,
+                         axes = c(1, 3),           
+                         label = "var",             
+                         col.var = "black",        
+                         habillage = df_wide$model, 
+                         repel = TRUE,
+                         legend.title = NULL,  
+                         show.legend = FALSE 
+) +
+  theme_minimal() +                        
+  theme(
+    axis.title = element_text(face = "bold", size = 14),               
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "none",
+    panel.grid.major = element_blank(),                                
+    panel.grid.minor = element_blank(),
+    plot.title = element_blank()
+  ) +
+  labs(
+    x = "PC1", y = "PC2"                                              
+  )
+
+bipl3_w <-fviz_pca_biplot(pca_result_w,
+                        axes = c(2, 3),           
+                        label = "var",             
+                        col.var = "black",        
+                        habillage = df_wide$model, 
+                        repel = TRUE
+                        ) +
+  theme_minimal() +                        
+  theme(
+    axis.title = element_text(face = "bold", size = 14),               
+    axis.text = element_text(size = 12),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    legend.position = "bottom",
+    legend.title = element_text(size = 15, face = "bold"),             
+    legend.text = element_text(size = 15, face = "bold"),                             
+    panel.grid.major = element_blank(),                                
+    panel.grid.minor = element_blank(),
+    plot.title = element_blank()
+  ) +
+  labs(
+    x = "PC1", y = "PC2"                                              
+  )
+
+bipl1_w / bipl2_w / bipl3_w
+
+
+
+
+
+###########################################################################
+# Example Ensemble using caretEnsemble
+
+library(caretEnsemble)
+
+# Define a list of models
+models <- caretList(
+  price ~ ., data = Train,
+  trControl = TT,
+  methodList = c("gbm", "xgbTree")
+)
+
+# Create an ensemble model
+ensemble <- caretEnsemble(models, metric = "RMSE")
+summary(ensemble)
+plot(models)
